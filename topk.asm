@@ -127,6 +127,7 @@ openFile:
     mov rsi, O_RDONLY
     mov rdx,  0x0               ; No mode
     syscall
+    jc fileNotFound             ; Report error with file
     ; rax now correct
     ret
 
