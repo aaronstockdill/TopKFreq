@@ -123,7 +123,7 @@ stringToInt:
     cmp cl, 0x0                 ; Is char null?
     je .end                     ; If yes, done
     mul rsi                     ; Shift Value one slot (base 10)
-    sub cl, '0'                 ; Char to int
+    and cl, 0x0f                ; Char to int
     add rax, rcx
     inc rdi                     ; Next char
     jmp .loop
@@ -183,6 +183,9 @@ printWords:
     mov byte cl, [r13]
     cmp cl, 0x0
     je .end
+    mov rdi, r13
+    mov rsi, r14
+    ; TODO: word buffer
     call prepBuffer
     mov rdi, r13
     mov rsi, r14
@@ -214,7 +217,44 @@ fillBuffer:
     ret
 
 
+;; prepBuffer
+;; Convert all upper-case to lower-case, and anything
+;; else will become null. If there is a potential 'fragment'
+;; at the end of the buffer, write it into the word buffer
+;; and replace it with nulls.
+;; INPUT: rdi = pointer to buffer
+;;        rsi = buffer length
+;;        rdx = pointer to word buffer
 prepBuffer:
+    ; TODO: unroll to work on qwords
+.loop:
+    cmp rsi, 0x0                ; At end of buffer?
+    jle .end
+    dec rsi
+    mov byte cl, [rdi + rsi]
+    cmp cl, 'A'
+    jl .nullify
+    cmp cl, 'z'
+    jg .nullify
+
+    ; cl is between 'A' and 'z'...
+    cmp cl, 'Z'
+    jle .upper
+    cmp cl, 'a'
+    jge .lower
+    ; Not a letter
+    jmp .nullify
+.upper:
+    xor cl, 0x20                ; convert to lower-case
+    mov byte [rdi + rsi], cl
+    jmp .loop
+.lower:
+    ; leave it alone!
+    jmp .loop
+.nullify:
+    mov byte [rdi + rsi], 0x00  ; Wipe them out, all of them
+    jmp .loop
+.end:
     ret
 
 
