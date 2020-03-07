@@ -47,13 +47,18 @@ _main:
     jne badArguments            ; If not, exit with error
 
     mov r15, rsi                ; Save rsi in r15, so it won't get clobbered
-    mov rdi, [r15 + 0x10]       ; r12 <- k = stringToInt(argv[2])
+    mov rdi, [r15 + 0x10]       ; r12 <- k = stringToInt(argv[2], 10)
+    mov rsi, 10
     call stringToInt
     mov r12, rax
 
     mov rdi, [r15 + 0x08]       ; r13 <- fd = open(argv[1])
     call openFile
     mov r13, rax
+
+    mov rdi, r13                ; printWords(fd, k)
+    mov rsi, r12
+    call printWords
 
     mov rdi, r13                ; close(fd)
     call closeFile
@@ -78,21 +83,29 @@ fileNotFound:
     write STDERR, fileNotFoundString, fileNotFoundStrLen
     jmp exitErr
 
+
+;; newline
+;; Write a newline to stdout.
+;; TOUCHED: rax, rdi, rsi
 newline:
     write STDOUT, newlineString, newlineStrLen
     ret
 
 
-
+;; stringToInt
+;; Reads the pointed-to string as a positive integer.
+;; INPUT: rdi = pointer to string
+;;        rsi = base of integer
+;; OUTPUT: rax = integer
+;; TOUCHED: rdi, rax, rcx, r8
 stringToInt:
     xor rax, rax                ; Value = 0
-    mov r8, 10
-    xor rcx, rcx
+    xor rcx, rcx                ; Clear tmp byte
 .loop:
     mov byte cl, [rdi]
     cmp cl, 0x0                 ; Is char null?
     je .end                     ; If yes, done
-    mul r8                      ; Shift Value one slot (base 10)
+    mul rsi                     ; Shift Value one slot (base 10)
     sub cl, '0'                 ; Char to int
     add rax, rcx
     inc rdi                     ; Next char
@@ -101,9 +114,89 @@ stringToInt:
     ret
 
 
+;; openFile
+;; Open the file with the path specified as a string
+;; pointed to by rdi. The file is opened for reading only.
+;; The file descriptor is returned in the rax register.
+;; INPUT: rdi = pointer to string
+;; OUTPUT: rax = file descriptor
+;; TOUCHED: rdi, rsi, rax, rdx
 openFile:
+    mov rax, SYS_OPEN
+    ; rdi already correct
+    mov rsi, O_RDONLY
+    mov rdx,  0x0               ; No mode
+    syscall
+    ; rax now correct
     ret
 
 
+;; closeFile
+;; Close the file whose file descriptor is in rdi.
+;; INPUT: rdi = file descriptor
+;; TOUCHED: rax
 closeFile:
+    mov rax, SYS_CLOSE
+    ; rdi already correct
+    syscall
+    ret
+
+
+;; printWords
+;; Print each word in the file in turn
+;; INPUT: rdi = file descriptor
+;; TOUCHED: rdi, ????
+printWords:
+.loop:
+    call fillBuffer
+    ; IF read buffer is empty AND word buffer is empty THEN jmp .end
+    call cleanBuffer
+    call processBuffer
+    ; jmp .loop
+.end:
+    ret
+
+
+;; fillBuffer
+;; Read in a fixed chunk of the file
+;; INPUT: rdi = file descriptor
+;;        rsi = pointer to buffer
+;;        rdx = size of buffer
+;; TOUCHED: rdi
+fillBuffer:
+    ret
+
+
+cleanBuffer:
+    ret
+
+
+processBuffer:
+    ret
+
+
+;; clearBuffer
+;; Overwrite the given buffer with zeros
+;; INPUT: rdi = pointer to buffer
+;;        rsi = size of buffer
+;; TOUCHED: rsi, rcx
+clearBuffer:
+.loopRemainder:
+    mov rcx, rsi
+    and rcx, 0x07               ; size mod 8
+    cmp rcx, 0x0                ; Does size mod 8 == 0?
+    je .doneRemainder           ; If yes, done with remainder
+    mov byte [rdi + rsi], 0x0
+    dec rsi
+    jmp .loopRemainder
+.doneRemainder:
+    shr rsi, 3                  ; size div 8
+    dec rsi
+.loopMain:
+    mov qword [rdi + rsi*8], 0x0
+    cmp rsi, 0x0                ; Is buffer done?
+    je .doneMain                ; If yes, done
+    dec rsi
+    jmp .loopMain
+.doneMain:
     ret
