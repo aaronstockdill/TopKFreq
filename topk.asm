@@ -15,6 +15,10 @@
 
 
 
+%macro zero 1
+    xor %1, %1
+%endmacro
+
 %macro write 3
     mov eax, SYS_WRITE
     mov rdi, %1
@@ -119,20 +123,28 @@ newline:
 ;; INPUT: rdi = pointer to string
 ;;        rsi = base of integer
 ;; OUTPUT: rax = integer
-;; TOUCHED: rdi, rax, rcx, r8
+;; TOUCHED: rdi, rax, rcx
 stringToInt:
-    xor rax, rax                ; Value = 0
-    xor rcx, rcx                ; Clear tmp byte
+%define strp rdi
+%define base rsi
+%define result rax
+    zero result
+    zero rcx
 .loop:
-    mov byte cl, [rdi]
+    mov byte cl, [strp]
     cmp cl, 0x0                 ; Is char null?
     je .end                     ; If yes, done
-    mul rsi                     ; Shift Value one slot (base 10)
+    mul base                    ; Shift Value one slot (base 10)
     and cl, 0x0f                ; Char to int
-    add rax, rcx
-    inc rdi                     ; Next char
+    add result, rcx
+    inc strp                     ; Next char
     jmp .loop
 .end:
+    ; Result is already rax
+%undef strp
+%undef base
+%undef result
+%undef tmp
     ret
 
 
@@ -172,36 +184,44 @@ closeFile:
 ;; TOUCHED: rdi, ????
 printWords:
     multipush r12, r13, r14, r15
-    mov r12, rdi                ; File descriptor
-    lea r13, [rel readBuffer]   ; Read buffer pointer
-    mov r14, readBufLen         ; Read buffer length
-    mov r15, rsi                ; Words to print
+%define fd r12
+%define buff r13
+%define buff_len r14
+%define k r15
+    mov fd, rdi
+    lea buff, [rel readBuffer]
+    mov buff_len, readBufLen
+    mov k, rsi
 .loop:
-    cmp r15, 0                  ; Is the number of words to print 0?
+    cmp k, 0                    ; Is the number of words to print 0?
     jle .end                    ; If yes, then done
-    mov rdi, r12
-    mov rsi, r13
-    mov rdx, r14
+    mov rdi, fd
+    mov rsi, buff
+    mov rdx, buff_len
     call fillBuffer
     ; IF read buffer is empty THEN jmp .end
-    mov byte cl, [r13]
+    mov byte cl, [buff]
     cmp cl, 0x00
     je .end
     ; ELSE prep the buffer...
-    mov rdi, r13
-    mov rsi, r14
-    mov rdx, r15
+    mov rdi, buff
+    mov rsi, buff_len
+    mov rdx, k
     call prepBuffer
-    ; mov r15, rax
+    ; mov k, rax
     ; ... then process it
-    mov rdi, r13
-    mov rsi, r14
-    ; mov rdx, r15
-    mov rdx, rax
+    mov rdi, buff
+    mov rsi, buff_len
+    ; mov rdx, k
+    mov rdx, rax                ; updated k
     call processBuffer
-    mov r15, rax
+    mov k, rax
     jmp .loop
 .end:
+%undef fd
+%undef buff
+%undef buff_len
+%undef k
     multipop r12, r13, r14, r15
     ret
 
@@ -213,14 +233,17 @@ printWords:
 ;;        rdx = size of buffer
 ;; TOUCHED: rdi, rsi, rdx
 fillBuffer:
+    ; Save rdi, rsi
     push rdi
     push rsi
+    ; Clear the buffer
     mov rdi, rsi
     mov rsi, rdx
     call clearBuffer
+    ; Restore rdi, rsi
     pop rsi
     pop rdi
-    mov rax, SYS_READ
+    mov rax, SYS_READ           ; Read file contents into buffer
     ; rdi, rsi, rdx already ok
     syscall
     ret
@@ -241,20 +264,23 @@ fillBuffer:
 ;; OUTPUT: rax = updated words left to process
 prepBuffer:
     ; TODO: unroll to work on qwords
-    ; pointer to read buffer, read buffer length, ...
-    ; ... pointer to word buffer, word buffer length, ...
-    ; ... words left to process
     multipush r12, r13, r14, r15, rbx
-    mov r12, rdi
-    mov r13, rsi
-    lea r14, [rel wordBuffer]
-    mov r15, wordBufLen
-    mov rbx, rdx
+%define rbuff r12
+%define rbufflen r13
+%define wbuff r14
+%define wbufflen r15
+%define k rbx
+    mov rbuff, rdi
+    mov rbufflen, rsi
+    lea wbuff, [rel wordBuffer]
+    mov wbufflen, wordBufLen
+    mov k, rdx
+%define idx rsi
 .loop:
-    cmp rsi, 0x0                ; At end of buffer?
+    cmp idx, 0x0                ; At end of buffer?
     jle .end
-    dec rsi
-    mov byte cl, [rdi + rsi]
+    dec idx
+    mov byte cl, [rbuff + idx]
     cmp cl, 'A'
     jl .nullify
     cmp cl, 'z'
@@ -268,70 +294,84 @@ prepBuffer:
     jmp .nullify
 .upper:
     xor cl, 0x20                ; convert to lower-case
-    mov byte [rdi + rsi], cl
+    mov byte [rbuff + idx], cl
     jmp .loop
 .lower:
     ; leave it alone!
     jmp .loop
 .nullify:
-    mov byte [rdi + rsi], 0x00  ; Wipe them out, all of them
+    mov byte [rbuff + idx], 0x00  ; Wipe them out, all of them
     jmp .loop
 .end:
-    mov byte cl, [r14]
+%undef idx
+%define rp rdi
+%define wp rax
+    mov byte cl, [wbuff]
     cmp byte cl, 0x00
     je .endFrag
-    mov rdi, r12
-    mov rax, r14
+    mov rp, rbuff
+    mov wp, wbuff
 .loopSeekWordEnd:
-    mov byte cl, [rax]
+    mov byte cl, [wp]
     cmp byte cl, 0x00
     je .endSeekWordEnd
-    inc rax
+    inc wp
     jmp .loopSeekWordEnd
 .endSeekWordEnd:
 .loopStartFrag:
     ; Handle the 'start' word fragments
-    mov byte cl, [rdi]
+    mov byte cl, [rp]
     cmp byte cl, 0x00
     je .endStartFrag            ; All necessary bytes copied
-    mov byte [rax], cl          ; Else copy byte...
-    mov byte [rdi], 0x00        ; ... And zero the source.
-    inc rax
-    inc rdi
+    mov byte [wp], cl          ; Else copy byte...
+    mov byte [rp], 0x00        ; ... And zero the source.
+    inc wp
+    inc rp
     jmp .loopStartFrag
 .endStartFrag:
-    mov rdi, r14
-    mov rsi, rax
-    sub rsi, r14
+%undef rp
+    mov rdi, wbuff
+    mov rsi, wp
+%undef wp
+    sub rsi, wbuff
     inc rsi
-    mov rdx, rbx
+    mov rdx, k
     call processBuffer          ; Process the word buffer now
-    mov rbx, rax
-    mov rdi, r14
-    mov rsi, r15
+    mov k, rax
+    mov rdi, wbuff
+    mov rsi, wbufflen
     call clearBuffer            ; Clear it for future use
 .endFrag:
-    mov rdi, r12
-    mov rax, r14
-    add rdi, r13                ; Go to end of buffer
-    dec rdi                     ; (Correct overshoot)
+%define rp rdi
+%define wp rax
+    mov wp, wbuff
+    mov rp, rbuff
+    add rp, rbufflen            ; Go to end of buffer
+    dec rp                      ; (Correct overshoot)
 .loopEndFrag:
     ; Handle the 'end' word fragments
-    mov byte cl, [rdi]
+    mov byte cl, [rp]
     cmp byte cl, 0x00
     je .endEndFrag              ; If null, finished copy
-    mov byte [rax], cl          ; Else copy the byte ...
-    mov byte [rdi], 0x00        ; ... zero the source...
-    dec rdi                     ; ... and step back
-    inc rax
+    mov byte [wp], cl           ; Else copy the byte ...
+    mov byte [rp], 0x00         ; ... zero the source...
+    dec rp                      ; ... and step back
+    inc wp
     jmp .loopEndFrag
 .endEndFrag:
     ; Note that the word buffer is backwards!
-    mov rsi, rax
+%undef rp
+    mov rsi, wp
+%undef wp
     dec rsi                     ; (Correct overshoot)
-    mov rdi, r14
+    mov rdi, wbuff
     call revBuffer              ; Reverse word buffer
-    mov rax, rbx
+    mov rax, k
+%undef rbuff
+%undef rbufflen
+%undef wbuff
+%undef wbufflen
+%undef k
     multipop r12, r13, r14, r15, rbx
     ret
 
@@ -346,40 +386,50 @@ prepBuffer:
 ;; TOUCHED: rdi, rsi, rax, rcx, rdx, r11-14
 processBuffer:
     ; head, tail, buff-len, words-left
-    multipush r15, r12, r13, r14
-    mov r15, rdi
-    mov r13, rsi
-    mov r14, rdx,
+    multipush r12, r13, r14, r15
+%define head r15
+%define tail r12
+%define bufflen r13
+%define k r14
+    mov head, rdi
+    mov bufflen, rsi
+    mov k, rdx
     ; We will inchworm our way through the buffer
 .loopWord:
-    cmp r14, 0                  ; Check how many more words we can write
-    jle .endWord                 ; If no more, done
-    mov r12, r15                ; rdi head, rcx tail
+    cmp k, 0                    ; Check how many more words we can write
+    jle .endWord                ; If no more, done
+    mov tail, head              ; rdi head, rcx tail
 .loopChar:
-    inc r15                     ; Step head
-    dec r13                     ; Lower distance to end of buffer
+    inc head                    ; Step head
+    dec bufflen                 ; Lower distance to end of buffer
     jz .endWord                 ; If we're out of space, must be done!
                                 ; Note: words must be null terminated,
-    mov byte cl, [r15]          ; Read in char
+    mov byte cl, [head]         ; Read in char
     cmp cl, 0x00                ; If not null...
     jne .loopChar               ; ... keep reading word. Else done.
 .endChar:
-    sub r15, r12                ; head - tail
-    cmp r15, 1
+    sub head, tail                ; head - tail
+%define len head
+    cmp len, 1
     jle .noprint                ; If only 1 apart, empty word: skip print
     mov rax, SYS_WRITE          ; Otherwise, print that thing out!
     mov rdi, STDOUT
-    mov rsi, r12
-    mov rdx, r15
+    mov rsi, tail
+    mov rdx, len
     syscall
+%undef len
     call newline
-    dec r14
+    dec k
 .noprint:
-    add r15, r12
+    add head, tail
     jmp .loopWord
 .endWord:
-    mov rax, r14
-    multipop r15, r12, r13, r14
+    mov rax, k
+%undef head
+%undef tail
+%undef bufflen
+%undef k
+    multipop r12, r13, r14, r15
     ret
 
 
@@ -389,24 +439,28 @@ processBuffer:
 ;;        rsi = size of buffer
 ;; TOUCHED: rsi, rcx
 clearBuffer:
+%define buff rdi
+%define idx rsi
 .loopRemainder:
-    mov rcx, rsi
+    mov rcx, idx
     and rcx, 0x07               ; size mod 8
     cmp rcx, 0x00
-    je .doneRemainder           ; If zero, done with remainder
-    mov byte [rdi + rsi], 0x0
-    dec rsi
+    je .endRemainder            ; If zero, done with remainder
+    dec idx
+    mov byte [buff + idx], 0x0
     jmp .loopRemainder
-.doneRemainder:
-    shr rsi, 3                  ; size div 8
-    dec rsi
+.endRemainder:
+    shr idx, 3                  ; size div 8
+    dec idx
 .loopMain:
-    mov qword [rdi + rsi*8], 0x0
-    cmp rsi, 0x0                ; Is buffer done?
-    je .doneMain                ; If yes, done
-    dec rsi
+    mov qword [buff + idx*8], 0x0
+    cmp idx, 0x0                ; Is buffer done?
+    je .endMain                 ; If yes, done
+    dec idx
     jmp .loopMain
-.doneMain:
+.endMain:
+%undef buff
+%undef idx
     ret
 
 
@@ -417,15 +471,19 @@ clearBuffer:
 ;; TOUCHES: rdi, rsi, rcx, rdx
 revBuffer:
     ; TODO: unroll for qwords
+%define left rdi
+%define right rsi
 .loop:
-    cmp rdi, rsi
+    cmp left, right
     jge .end
-    mov byte cl, [rdi]
-    mov byte dl, [rsi]
-    mov byte [rsi], cl
-    mov byte [rdi], dl
-    inc rdi
-    dec rsi
+    mov byte cl, [left]
+    mov byte dl, [right]
+    mov byte [right], cl
+    mov byte [left], dl
+    inc left
+    dec right
     jmp .loop
 .end:
+%undef left
+%undef right
     ret
