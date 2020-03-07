@@ -53,11 +53,14 @@ wrongArgStrLen: equ $ - wrongArgString
 fileNotFoundString: db 'Error: file not found',0xa
 fileNotFoundStrLen: equ $ - fileNotFoundString
 
-readBuffer: times 64 db 0x0
-readBufLen: equ 64
+readBuffer: times 4096 db 0x0
+readBufLen: equ 4096
 
-wordBuffer: times 256 db 0x0
-wordBufLen: equ 256
+;; This implicitly means a word is at most 64 characters.
+;; Probably safe in English:
+;;     https://en.wikipedia.org/wiki/Longest_word_in_English
+wordBuffer: times 64 db 0x0
+wordBufLen: equ 64
 
     section .text
 
