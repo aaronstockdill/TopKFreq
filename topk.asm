@@ -53,6 +53,9 @@ wrongArgStrLen: equ $ - wrongArgString
 fileNotFoundString: db 'Error: file not found',0xa
 fileNotFoundStrLen: equ $ - fileNotFoundString
 
+readBuffer: times 64 db 0x0
+readBufLen: equ 64
+
 
     section .text
 
@@ -160,15 +163,34 @@ closeFile:
 ;; printWords
 ;; Print each word in the file in turn
 ;; INPUT: rdi = file descriptor
+;;        rsi = number of words
 ;; TOUCHED: rdi, ????
 printWords:
+    multipush r12, r13, r14, r15
+    mov r12, rdi                ; File descriptor
+    lea r13, [rel readBuffer]   ; Read buffer pointer
+    mov r14, readBufLen         ; Read buffer length
+    mov r15, rsi                ; Words to print
 .loop:
+    cmp r15, 0                  ; Is the number of words to print 0?
+    jle .end                    ; If yes, then done
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, r14
     call fillBuffer
     ; IF read buffer is empty AND word buffer is empty THEN jmp .end
-    call cleanBuffer
+    ; Currently no word buffer...
+    mov byte cl, [r13]
+    cmp cl, 0x0
+    je .end
+    call prepBuffer
+    mov rdi, r13
+    mov rsi, r14
     call processBuffer
-    ; jmp .loop
+    dec r15
+    jmp .loop
 .end:
+    multipop r12, r13, r14, r15
     ret
 
 
@@ -177,16 +199,40 @@ printWords:
 ;; INPUT: rdi = file descriptor
 ;;        rsi = pointer to buffer
 ;;        rdx = size of buffer
-;; TOUCHED: rdi
+;; TOUCHED: rdi, rsi, rdx
 fillBuffer:
+    push rdi
+    push rsi
+    mov rdi, rsi
+    mov rsi, rdx
+    call clearBuffer
+    pop rsi
+    pop rdi
+    mov rax, SYS_READ
+    ; rdi, rsi, rdx already ok
+    syscall
     ret
 
 
-cleanBuffer:
+prepBuffer:
     ret
 
 
+;; processBuffer
+;; For now, we just write the buffer to stdout,
+;; followed by two newlines.
+;; INPUT: rdi = pointer to buffer
+;;        rsi = buffer length
+;; TOUCHED: rdi, rsi, rdx
 processBuffer:
+    ; write macro only good for constants
+    mov rax, SYS_WRITE
+    mov rdx, rsi
+    mov rsi, rdi
+    mov rdi, STDOUT
+    syscall
+    call newline
+    call newline
     ret
 
 
