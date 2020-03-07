@@ -189,8 +189,9 @@ printWords:
     call prepBuffer
     mov rdi, r13
     mov rsi, r14
+    mov rdx, r15
     call processBuffer
-    dec r15
+    mov r15, rax
     jmp .loop
 .end:
     multipop r12, r13, r14, r15
@@ -259,20 +260,49 @@ prepBuffer:
 
 
 ;; processBuffer
-;; For now, we just write the buffer to stdout,
-;; followed by two newlines.
+;; Write each word to STDOUT, followed by a newline.
+;; This is done at most 'rdx' times.
 ;; INPUT: rdi = pointer to buffer
 ;;        rsi = buffer length
-;; TOUCHED: rdi, rsi, rdx
+;;        rdx = words left to write
+;; OUTPUT: rax = updated number of words left to write
+;; TOUCHED: rdi, rsi, rax, rcx, rdx, r11-14
 processBuffer:
-    ; write macro only good for constants
-    mov rax, SYS_WRITE
-    mov rdx, rsi
-    mov rsi, rdi
+    ; head, tail, buff-len, words-left
+    multipush r15, r12, r13, r14
+    mov r15, rdi
+    mov r13, rsi
+    mov r14, rdx,
+    ; We will inchworm our way through the buffer
+.loopWord:
+    cmp r14, 0                  ; Check how many more words we can write
+    jle .endWord                 ; If no more, done
+    mov r12, r15                ; rdi head, rcx tail
+.loopChar:
+    inc r15                     ; Step head
+    dec r13                     ; Lower distance to end of buffer
+    jz .endWord                 ; If we're out of space, must be done!
+                                ; Note: words must be null terminated,
+    mov byte cl, [r15]          ; Read in char
+    cmp cl, 0x00                ; If not null...
+    jne .loopChar               ; ... keep reading word. Else done.
+.endChar:
+    sub r15, r12                ; head - tail
+    cmp r15, 1
+    jle .noprint                ; If only 1 apart, empty word: skip print
+    mov rax, SYS_WRITE          ; Otherwise, print that thing out!
     mov rdi, STDOUT
+    mov rsi, r12
+    mov rdx, r15
     syscall
     call newline
-    call newline
+    dec r14
+.noprint:
+    add r15, r12
+    jmp .loopWord
+.endWord:
+    mov rax, r14
+    multipop r15, r12, r13, r14
     ret
 
 
@@ -285,8 +315,7 @@ clearBuffer:
 .loopRemainder:
     mov rcx, rsi
     and rcx, 0x07               ; size mod 8
-    cmp rcx, 0x0                ; Does size mod 8 == 0?
-    je .doneRemainder           ; If yes, done with remainder
+    jz .doneRemainder           ; If zero, done with remainder
     mov byte [rdi + rsi], 0x0
     dec rsi
     jmp .loopRemainder
