@@ -92,7 +92,7 @@ _main:
     ; Fall through to exitOk
 exitOk:
     mov rax, SYS_EXIT
-    mov rdi, r12
+    mov rdi, EXIT_OK
     syscall
 exitErr:
     mov rax, SYS_EXIT
