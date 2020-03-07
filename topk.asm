@@ -56,6 +56,8 @@ fileNotFoundStrLen: equ $ - fileNotFoundString
 readBuffer: times 64 db 0x0
 readBufLen: equ 64
 
+wordBuffer: times 256 db 0x0
+wordBufLen: equ 256
 
     section .text
 
@@ -178,18 +180,21 @@ printWords:
     mov rsi, r13
     mov rdx, r14
     call fillBuffer
-    ; IF read buffer is empty AND word buffer is empty THEN jmp .end
-    ; Currently no word buffer...
+    ; IF read buffer is empty THEN jmp .end
     mov byte cl, [r13]
-    cmp cl, 0x0
+    cmp cl, 0x00
     je .end
-    mov rdi, r13
-    mov rsi, r14
-    ; TODO: word buffer
-    call prepBuffer
+    ; ELSE prep the buffer...
     mov rdi, r13
     mov rsi, r14
     mov rdx, r15
+    call prepBuffer
+    ; mov r15, rax
+    ; ... then process it
+    mov rdi, r13
+    mov rsi, r14
+    ; mov rdx, r15
+    mov rdx, rax
     call processBuffer
     mov r15, rax
     jmp .loop
@@ -222,12 +227,26 @@ fillBuffer:
 ;; Convert all upper-case to lower-case, and anything
 ;; else will become null. If there is a potential 'fragment'
 ;; at the end of the buffer, write it into the word buffer
-;; and replace it with nulls.
+;; and replace it with nulls. If there is already content
+;; in the word buffer, we append move everything up to the
+;; first non-character, then process the word buffer. This
+;; means the word buffer will always end up with the
+;; trailing 'boundary word' in it.
 ;; INPUT: rdi = pointer to buffer
 ;;        rsi = buffer length
-;;        rdx = pointer to word buffer
+;;        rdx = words left to process
+;; OUTPUT: rax = updated words left to process
 prepBuffer:
     ; TODO: unroll to work on qwords
+    ; pointer to read buffer, read buffer length, ...
+    ; ... pointer to word buffer, word buffer length, ...
+    ; ... words left to process
+    multipush r12, r13, r14, r15, rbx
+    mov r12, rdi
+    mov r13, rsi
+    lea r14, [rel wordBuffer]
+    mov r15, wordBufLen
+    mov rbx, rdx
 .loop:
     cmp rsi, 0x0                ; At end of buffer?
     jle .end
@@ -237,8 +256,7 @@ prepBuffer:
     jl .nullify
     cmp cl, 'z'
     jg .nullify
-
-    ; cl is between 'A' and 'z'...
+    ; Now know cl is between 'A' and 'z'...
     cmp cl, 'Z'
     jle .upper
     cmp cl, 'a'
@@ -256,6 +274,62 @@ prepBuffer:
     mov byte [rdi + rsi], 0x00  ; Wipe them out, all of them
     jmp .loop
 .end:
+    mov byte cl, [r14]
+    cmp byte cl, 0x00
+    je .endFrag
+    mov rdi, r12
+    mov rax, r14
+.loopSeekWordEnd:
+    mov byte cl, [rax]
+    cmp byte cl, 0x00
+    je .endSeekWordEnd
+    inc rax
+    jmp .loopSeekWordEnd
+.endSeekWordEnd:
+.loopStartFrag:
+    ; Handle the 'start' word fragments
+    mov byte cl, [rdi]
+    cmp byte cl, 0x00
+    je .endStartFrag            ; All necessary bytes copied
+    mov byte [rax], cl          ; Else copy byte...
+    mov byte [rdi], 0x00        ; ... And zero the source.
+    inc rax
+    inc rdi
+    jmp .loopStartFrag
+.endStartFrag:
+    mov rdi, r14
+    mov rsi, rax
+    sub rsi, r14
+    inc rsi
+    mov rdx, rbx
+    call processBuffer          ; Process the word buffer now
+    mov rbx, rax
+    mov rdi, r14
+    mov rsi, r15
+    call clearBuffer            ; Clear it for future use
+.endFrag:
+    mov rdi, r12
+    mov rax, r14
+    add rdi, r13                ; Go to end of buffer
+    dec rdi                     ; (Correct overshoot)
+.loopEndFrag:
+    ; Handle the 'end' word fragments
+    mov byte cl, [rdi]
+    cmp byte cl, 0x00
+    je .endEndFrag              ; If null, finished copy
+    mov byte [rax], cl          ; Else copy the byte ...
+    mov byte [rdi], 0x00        ; ... zero the source...
+    dec rdi                     ; ... and step back
+    inc rax
+    jmp .loopEndFrag
+.endEndFrag:
+    ; Note that the word buffer is backwards!
+    mov rsi, rax
+    dec rsi                     ; (Correct overshoot)
+    mov rdi, r14
+    call revBuffer              ; Reverse word buffer
+    mov rax, rbx
+    multipop r12, r13, r14, r15, rbx
     ret
 
 
@@ -315,7 +389,8 @@ clearBuffer:
 .loopRemainder:
     mov rcx, rsi
     and rcx, 0x07               ; size mod 8
-    jz .doneRemainder           ; If zero, done with remainder
+    cmp rcx, 0x00
+    je .doneRemainder           ; If zero, done with remainder
     mov byte [rdi + rsi], 0x0
     dec rsi
     jmp .loopRemainder
@@ -329,4 +404,25 @@ clearBuffer:
     dec rsi
     jmp .loopMain
 .doneMain:
+    ret
+
+
+;; revBuffer
+;; Reverse the contents of the buffer
+;; INPUT: rdi = buffer start
+;;        rsi = buffer end
+;; TOUCHES: rdi, rsi, rcx, rdx
+revBuffer:
+    ; TODO: unroll for qwords
+.loop:
+    cmp rdi, rsi
+    jge .end
+    mov byte cl, [rdi]
+    mov byte dl, [rsi]
+    mov byte [rsi], cl
+    mov byte [rdi], dl
+    inc rdi
+    dec rsi
+    jmp .loop
+.end:
     ret
