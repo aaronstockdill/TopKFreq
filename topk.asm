@@ -1,17 +1,21 @@
-%define SYS_EXIT   0x2000001
-%define SYS_READ   0x2000003
-%define SYS_WRITE  0x2000004
-%define SYS_OPEN   0x2000005
-%define SYS_CLOSE  0x2000006
+%define SYS_EXIT    0x02000001
+%define SYS_READ    0x02000003
+%define SYS_WRITE   0x02000004
+%define SYS_OPEN    0x02000005
+%define SYS_CLOSE   0x02000006
+%define SYS_MMAP    0x020000c5
 
-%define EXIT_OK    0x0000000
-%define EXIT_ERR   0x0000000
+%define EXIT_OK     0x00000000
+%define EXIT_ERR    0x00000000
 
-%define STDIN      0x0000000
-%define STDOUT     0x0000001
-%define STDERR     0x0000002
+%define STDIN       0x00000000
+%define STDOUT      0x00000001
+%define STDERR      0x00000002
 
-%define O_RDONLY   0x0000000
+%define O_RDONLY    0x00000000
+
+%define M_PROT_RW   0x00000006
+%define M_PRIV_ANON 0x00001000
 
 
 
@@ -57,7 +61,9 @@ wrongArgStrLen: equ $ - wrongArgString
 fileNotFoundString: db 'Error: file not found',0xa
 fileNotFoundStrLen: equ $ - fileNotFoundString
 
-readBuffer: times 4096 db 0x0
+memoryAllocFailString: db 'Error: memory allocation failed',0xa
+memoryAllocFailStrLen: equ $ - memoryAllocFailString
+
 readBufLen: equ 4096
 
 ;; This implicitly means a word is at most 64 characters.
@@ -107,6 +113,11 @@ badArguments:
 
 fileNotFound:
     write STDERR, fileNotFoundString, fileNotFoundStrLen
+    jmp exitErr
+
+
+memoryFailure:
+    write STDERR, memoryAllocFailString, memoryAllocFailStrLen
     jmp exitErr
 
 
@@ -177,6 +188,26 @@ closeFile:
     ret
 
 
+;; allocBuffer
+;; Allocates 'rdi' bytes of memory, and
+;; returns a pointer to that memory in 'rax'
+;; INPUT: rdi = bytes to allocate
+;; OUTPUT: rax = pointer to allocated memory
+;; TOUCHED: rdi, rsi, rax, rdx, r8, r9, r10
+allocBuffer:
+    mov rax, SYS_MMAP
+    mov rsi, rdi                ; Bytes
+    mov rdi, 0x00               ; Address (always null)
+    mov rdx, M_PROT_RW          ; Read/write
+    mov r10, M_PRIV_ANON        ; Local
+    mov r8, -1                  ; File (always -1)
+    mov r9, 0                   ; Offset (always 0)
+    syscall
+    jc memoryFailure
+    ; rax correct
+    ret
+
+
 ;; printWords
 ;; Print each word in the file in turn
 ;; INPUT: rdi = file descriptor
@@ -186,18 +217,20 @@ printWords:
     multipush r12, r13, r14, r15
 %define fd r12
 %define buff r13
-%define buff_len r14
+%define bufflen r14
 %define k r15
     mov fd, rdi
-    lea buff, [rel readBuffer]
-    mov buff_len, readBufLen
+    mov bufflen, readBufLen
     mov k, rsi
+    mov rdi, bufflen
+    call allocBuffer
+    mov buff, rax
 .loop:
     cmp k, 0                    ; Is the number of words to print 0?
     jle .end                    ; If yes, then done
     mov rdi, fd
     mov rsi, buff
-    mov rdx, buff_len
+    mov rdx, bufflen
     call fillBuffer
     ; IF read buffer is empty THEN jmp .end
     mov byte cl, [buff]
@@ -205,13 +238,13 @@ printWords:
     je .end
     ; ELSE prep the buffer...
     mov rdi, buff
-    mov rsi, buff_len
+    mov rsi, bufflen
     mov rdx, k
     call prepBuffer
     ; mov k, rax
     ; ... then process it
     mov rdi, buff
-    mov rsi, buff_len
+    mov rsi, bufflen
     ; mov rdx, k
     mov rdx, rax                ; updated k
     call processBuffer
@@ -220,7 +253,7 @@ printWords:
 .end:
 %undef fd
 %undef buff
-%undef buff_len
+%undef bufflen
 %undef k
     multipop r12, r13, r14, r15
     ret
