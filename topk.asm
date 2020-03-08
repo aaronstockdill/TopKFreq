@@ -69,7 +69,7 @@ readBufLen: equ 4096
 ;; This implicitly means a word is at most 64 characters.
 ;; Probably safe in English:
 ;;     https://en.wikipedia.org/wiki/Longest_word_in_English
-wordBuffer: times 64 db 0x0
+wordBuffer: times 64 db 0x00
 wordBufLen: equ 64
 
     section .text
@@ -78,22 +78,28 @@ _main:
     cmp rdi, 3                  ; Are there three arguments?
     jne badArguments            ; If not, exit with error
 
-    mov r15, rsi                ; Save rsi in r15, so it won't get clobbered
-    mov rdi, [r15 + 0x10]       ; r12 <- k = stringToInt(argv[2], 10)
+%define argv r15
+%define k r12
+%define fd r13
+    mov argv, rsi               ; Save rsi in r15, so it won't get clobbered
+    mov rdi, [argv + 0x10]      ; r12 <- k = stringToInt(argv[2], 10)
     mov rsi, 10
     call stringToInt
-    mov r12, rax
+    mov k, rax
 
-    mov rdi, [r15 + 0x08]       ; r13 <- fd = open(argv[1])
+    mov rdi, [argv + 0x08]      ; r13 <- fd = open(argv[1])
     call openFile
-    mov r13, rax
+    mov fd, rax
 
-    mov rdi, r13                ; printWords(fd, k)
-    mov rsi, r12
+    mov rdi, fd                ; printWords(fd, k)
+    mov rsi, k
     call printWords
 
-    mov rdi, r13                ; close(fd)
+    mov rdi, fd                ; close(fd)
     call closeFile
+%undef argv
+%undef fd
+%undef k
 
     ; Fall through to exitOk
 exitOk:
@@ -143,7 +149,7 @@ stringToInt:
     zero rcx
 .loop:
     mov byte cl, [strp]
-    cmp cl, 0x0                 ; Is char null?
+    cmp byte cl, 0x00           ; Is char null?
     je .end                     ; If yes, done
     mul base                    ; Shift Value one slot (base 10)
     and cl, 0x0f                ; Char to int
@@ -170,7 +176,7 @@ openFile:
     mov rax, SYS_OPEN
     ; rdi already correct
     mov rsi, O_RDONLY
-    mov rdx,  0x0               ; No mode
+    zero rdx                    ; No mode
     syscall
     jc fileNotFound             ; Report error with file
     ; rax now correct
@@ -197,11 +203,11 @@ closeFile:
 allocBuffer:
     mov rax, SYS_MMAP
     mov rsi, rdi                ; Bytes
-    mov rdi, 0x00               ; Address (always null)
+    zero rdi                    ; Address (always null)
     mov rdx, M_PROT_RW          ; Read/write
     mov r10, M_PRIV_ANON        ; Local
     mov r8, -1                  ; File (always -1)
-    mov r9, 0                   ; Offset (always 0)
+    zero r9                     ; Offset (always 0)
     syscall
     jc memoryFailure
     ; rax correct
@@ -232,22 +238,19 @@ printWords:
     mov rsi, buff
     mov rdx, bufflen
     call fillBuffer
-    ; IF read buffer is empty THEN jmp .end
     mov byte cl, [buff]
     cmp cl, 0x00
-    je .end
-    ; ELSE prep the buffer...
+    je .end                     ; IF read buffer is empty THEN jmp .end
     mov rdi, buff
     mov rsi, bufflen
     mov rdx, k
-    call prepBuffer
+    call prepBuffer             ; ELSE prep the buffer...
     ; mov k, rax
-    ; ... then process it
     mov rdi, buff
     mov rsi, bufflen
     ; mov rdx, k
     mov rdx, rax                ; updated k
-    call processBuffer
+    call processBuffer          ; ... then process it
     mov k, rax
     jmp .loop
 .end:
@@ -310,7 +313,7 @@ prepBuffer:
     mov k, rdx
 %define idx rsi
 .loop:
-    cmp idx, 0x0                ; At end of buffer?
+    cmp idx, 0x00               ; At end of buffer?
     jle .end
     dec idx
     mov byte cl, [rbuff + idx]
@@ -356,8 +359,8 @@ prepBuffer:
     mov byte cl, [rp]
     cmp byte cl, 0x00
     je .endStartFrag            ; All necessary bytes copied
-    mov byte [wp], cl          ; Else copy byte...
-    mov byte [rp], 0x00        ; ... And zero the source.
+    mov byte [wp], cl           ; Else copy byte...
+    mov byte [rp], 0x00         ; ... And zero the source.
     inc wp
     inc rp
     jmp .loopStartFrag
@@ -427,8 +430,7 @@ processBuffer:
     mov head, rdi
     mov bufflen, rsi
     mov k, rdx
-    ; We will inchworm our way through the buffer
-.loopWord:
+.loopWord:                      ; We will inchworm our way through the buffer
     cmp k, 0                    ; Check how many more words we can write
     jle .endWord                ; If no more, done
     mov tail, head              ; rdi head, rcx tail
@@ -441,7 +443,7 @@ processBuffer:
     cmp cl, 0x00                ; If not null...
     jne .loopChar               ; ... keep reading word. Else done.
 .endChar:
-    sub head, tail                ; head - tail
+    sub head, tail
 %define len head
     cmp len, 1
     jle .noprint                ; If only 1 apart, empty word: skip print
@@ -480,14 +482,14 @@ clearBuffer:
     cmp rcx, 0x00
     je .endRemainder            ; If zero, done with remainder
     dec idx
-    mov byte [buff + idx], 0x0
+    mov byte [buff + idx], 0x00
     jmp .loopRemainder
 .endRemainder:
     shr idx, 3                  ; size div 8
     dec idx
 .loopMain:
-    mov qword [buff + idx*8], 0x0
-    cmp idx, 0x0                ; Is buffer done?
+    mov qword [buff + idx*8], 0x00
+    cmp idx, 0x00               ; Is buffer done?
     je .endMain                 ; If yes, done
     dec idx
     jmp .loopMain
