@@ -4,6 +4,7 @@
 %define SYS_OPEN    0x02000005
 %define SYS_CLOSE   0x02000006
 %define SYS_MMAP    0x020000c5
+%define SYS_FSTAT   0x02000153
 
 %define EXIT_OK     0x00000000
 %define EXIT_ERR    0x00000000
@@ -66,6 +67,8 @@ memoryAllocFailStrLen: equ $ - memoryAllocFailString
 
 readBufLen: equ 4096
 
+fstatBuffer: times 128 db 0x00
+
 ;; This implicitly means a word is at most 64 characters.
 ;; Probably safe in English:
 ;;     https://en.wikipedia.org/wiki/Longest_word_in_English
@@ -81,6 +84,7 @@ _main:
 %define argv r15
 %define k r12
 %define fd r13
+%define children r14
     mov argv, rsi               ; Save rsi in r15, so it won't get clobbered
     mov rdi, [argv + 0x10]      ; r12 <- k = stringToInt(argv[2], 10)
     mov rsi, 10
@@ -90,6 +94,13 @@ _main:
     mov rdi, [argv + 0x08]      ; r13 <- fd = open(argv[1])
     call openFile
     mov fd, rax
+
+    mov rdi, fd                 ; r14 <- children = alloc(fileSize(fd))
+    call fileSize
+    mov rdi, rax
+    shl rdi, 3                  ; size *= 8
+    call allocBuffer
+    mov children, rax
 
     mov rdi, fd                ; printWords(fd, k)
     mov rsi, k
@@ -192,6 +203,22 @@ closeFile:
     ; rdi already correct
     syscall
     ret
+
+
+;; fileSize
+;; Read the size from rdi file descriptor.
+;; INPUT: rdi = file descriptor
+;; OUTPUT: rax = file size
+;; TOUCHED: rdi, rsi, rax, rdx
+fileSize:
+    mov rax, SYS_FSTAT
+    ; rdi already correct
+    lea rsi, [rel fstatBuffer]
+    syscall
+    zero rax
+    mov rax, [rsi + 0x60]
+    ret
+
 
 
 ;; allocBuffer
@@ -446,7 +473,7 @@ processBuffer:
     sub head, tail
 %define len head
     cmp len, 1
-    jle .noprint                ; If only 1 apart, empty word: skip print
+    jle .noWord                 ; If only 1 apart, empty word: skip
     mov rax, SYS_WRITE          ; Otherwise, print that thing out!
     mov rdi, STDOUT
     mov rsi, tail
@@ -455,7 +482,7 @@ processBuffer:
 %undef len
     call newline
     dec k
-.noprint:
+.noWord:
     add head, tail
     jmp .loopWord
 .endWord:
